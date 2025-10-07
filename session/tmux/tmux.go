@@ -204,11 +204,11 @@ func (t *TmuxSession) Restore() error {
 // hashing to minimize overhead during frequent polling (every 100-500ms).
 //
 // Design rationale: Uses maphash instead of SHA256 for performance:
-// - maphash is 10-50x faster than SHA256
-// - Uses 64-bit hash (collision probability ~1 in 2^64) vs SHA256's 256-bit
-// - Acceptable trade-off: terminal outputs are substantially different between
-//   updates, and missed changes only delay UI refresh by one polling interval
-// - WriteString avoids allocating []byte copies of potentially large terminal output
+//   - maphash is 10-50x faster than SHA256
+//   - Uses 64-bit hash (collision probability ~1 in 2^64) vs SHA256's 256-bit
+//   - Acceptable trade-off: terminal outputs are substantially different between
+//     updates, and missed changes only delay UI refresh by one polling interval
+//   - WriteString avoids allocating []byte copies of potentially large terminal output
 //
 // Thread-safety: Not thread-safe. Assumes single-threaded access by either
 // the bubbletea UI event loop or daemon polling goroutine (separate instances).
@@ -225,10 +225,10 @@ func newStatusMonitor() *statusMonitor {
 // hash computes a fast, non-cryptographic hash of the terminal output string.
 //
 // Uses maphash for performance over SHA256:
-// - Non-cryptographic hash is sufficient for change detection
-// - WriteString avoids allocating a []byte copy of the input
-// - Hash collisions are unlikely between consecutive terminal outputs and
-//   low-impact (just delays detecting an update by one polling interval)
+//   - Non-cryptographic hash is sufficient for change detection
+//   - WriteString avoids allocating a []byte copy of the input
+//   - Hash collisions are unlikely between consecutive terminal outputs and
+//     low-impact (just delays detecting an update by one polling interval)
 //
 // Not thread-safe: assumes single-threaded access per statusMonitor instance.
 func (m *statusMonitor) hash(s string) uint64 {
