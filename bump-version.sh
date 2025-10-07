@@ -36,12 +36,17 @@ echo "New version: $NEW_VERSION"
 # Update version in main.go - using a more direct approach with awk
 awk -v old="version[ ]*=[ ]*\"$CURRENT_VERSION\"" -v new="version     = \"$NEW_VERSION\"" '{gsub(old, new); print}' "$MAIN_FILE" > temp.go && mv temp.go "$MAIN_FILE"
 
-# Commit the change
+# Commit the change using Conventional Commits format
 git add "$MAIN_FILE"
-git commit -m "Bump version to $NEW_VERSION"
+git commit -m "chore: bump version to $NEW_VERSION"
 
 # Create git tag
-git tag -a "v$NEW_VERSION" -m "Version $NEW_VERSION"
+git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
 
 echo "✅ Version bumped to $NEW_VERSION and tag created"
-echo "To push changes: git push && git push --tags"
+echo ""
+echo "To push changes and trigger release:"
+echo "  git push origin main && git push origin v$NEW_VERSION"
+echo ""
+echo "Or to push everything at once:"
+echo "  git push origin main --follow-tags"
