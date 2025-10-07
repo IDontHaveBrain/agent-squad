@@ -3,11 +3,10 @@ package tmux
 import (
 	"agent-squad/cmd"
 	"agent-squad/log"
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
+	"hash/maphash"
 	"io"
 	"os"
 	"os/exec"
@@ -201,21 +200,41 @@ func (t *TmuxSession) Restore() error {
 	return nil
 }
 
+// statusMonitor tracks changes in tmux pane output using fast, non-cryptographic
+// hashing to minimize overhead during frequent polling (every 100-500ms).
+//
+// Design rationale: Uses maphash instead of SHA256 for performance:
+// - maphash is 10-50x faster than SHA256
+// - Uses 64-bit hash (collision probability ~1 in 2^64) vs SHA256's 256-bit
+// - Acceptable trade-off: terminal outputs are substantially different between
+//   updates, and missed changes only delay UI refresh by one polling interval
+// - WriteString avoids allocating []byte copies of potentially large terminal output
+//
+// Thread-safety: Not thread-safe. Assumes single-threaded access by either
+// the bubbletea UI event loop or daemon polling goroutine (separate instances).
 type statusMonitor struct {
-	// Store hashes to save memory.
-	prevOutputHash []byte
+	hasher         maphash.Hash
+	prevOutputSum  uint64
+	prevOutputSeen bool
 }
 
 func newStatusMonitor() *statusMonitor {
 	return &statusMonitor{}
 }
 
-// hash hashes the string.
-func (m *statusMonitor) hash(s string) []byte {
-	h := sha256.New()
-	// TODO: this allocation sucks since the string is probably large. Ideally, we hash the string directly.
-	h.Write([]byte(s))
-	return h.Sum(nil)
+// hash computes a fast, non-cryptographic hash of the terminal output string.
+//
+// Uses maphash for performance over SHA256:
+// - Non-cryptographic hash is sufficient for change detection
+// - WriteString avoids allocating a []byte copy of the input
+// - Hash collisions are unlikely between consecutive terminal outputs and
+//   low-impact (just delays detecting an update by one polling interval)
+//
+// Not thread-safe: assumes single-threaded access per statusMonitor instance.
+func (m *statusMonitor) hash(s string) uint64 {
+	m.hasher.Reset()
+	m.hasher.WriteString(s)
+	return m.hasher.Sum64()
 }
 
 // TapEnter sends an enter keystroke to the tmux pane.
@@ -259,8 +278,10 @@ func (t *TmuxSession) HasUpdated() (updated bool, hasPrompt bool) {
 		hasPrompt = strings.Contains(content, "Yes, allow once")
 	}
 
-	if !bytes.Equal(t.monitor.hash(content), t.monitor.prevOutputHash) {
-		t.monitor.prevOutputHash = t.monitor.hash(content)
+	currentHash := t.monitor.hash(content)
+	if !t.monitor.prevOutputSeen || t.monitor.prevOutputSum != currentHash {
+		t.monitor.prevOutputSum = currentHash
+		t.monitor.prevOutputSeen = true
 		return true, hasPrompt
 	}
 	return false, hasPrompt
