@@ -57,11 +57,11 @@ type TmuxSession struct {
 	wg     *sync.WaitGroup
 }
 
-const TmuxPrefix = "claudesquad_"
+const TmuxPrefix = "agentsquad_"
 
 var whiteSpaceRegex = regexp.MustCompile(`\s+`)
 
-func toClaudeSquadTmuxName(str string) string {
+func toAgentSquadTmuxName(str string) string {
 	str = whiteSpaceRegex.ReplaceAllString(str, "")
 	str = strings.ReplaceAll(str, ".", "_") // tmux replaces all . with _
 	return fmt.Sprintf("%s%s", TmuxPrefix, str)
@@ -79,7 +79,7 @@ func NewTmuxSessionWithDeps(name string, program string, ptyFactory PtyFactory, 
 
 func newTmuxSession(name string, program string, ptyFactory PtyFactory, cmdExec cmd.Executor) *TmuxSession {
 	return &TmuxSession{
-		sanitizedName: toClaudeSquadTmuxName(name),
+		sanitizedName: toAgentSquadTmuxName(name),
 		program:       program,
 		ptyFactory:    ptyFactory,
 		cmdExec:       cmdExec,

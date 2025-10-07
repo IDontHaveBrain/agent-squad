@@ -20,19 +20,19 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Claude Squad - Manage Multiple AI Code Assistants",
+  title: "Agent Squad - Manage Multiple AI Code Assistants",
   description: "A terminal app that manages multiple AI code assistants (Claude Code, Codex, Aider, etc.) in separate workspaces, allowing you to work on multiple tasks simultaneously.",
-  keywords: ["claude", "claude squad", "ai", "code assistant", "terminal", "tmux", "claude code", "codex", "aider"],
-  authors: [{ name: "smtg-ai" }],
+  keywords: ["agent", "agent squad", "ai", "code assistant", "terminal", "tmux", "claude code", "codex", "aider"],
+  authors: [{ name: "IDontHaveBrain" }],
   openGraph: {
-    title: "Claude Squad",
+    title: "Agent Squad",
     description: "A terminal app that manages multiple AI code assistants in separate workspaces",
-    url: "https://github.com/smtg-ai/claude-squad",
+    url: "https://github.com/IDontHaveBrain/agent-squad",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Claude Squad",
+    title: "Agent Squad",
     description: "A terminal app that manages multiple AI code assistants in separate workspaces",
   },
 };

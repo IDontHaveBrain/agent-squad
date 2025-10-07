@@ -7,7 +7,7 @@ Agent Squad is a terminal app that manages multiple [Claude Code](https://github
 This project is a fork and continuation of [Claude Squad](https://github.com/smtg-ai/claude-squad) by smtg-ai, which is no longer actively maintained. Agent Squad maintains the same AGPL-3.0 license and continues to build upon the excellent foundation provided by the original project.
 
 
-![Claude Squad Screenshot](assets/screenshot.png)
+![Agent Squad Screenshot](assets/screenshot.png)
 
 ### Highlights
 - Complete tasks in the background (including yolo / auto-accept mode!)
@@ -23,7 +23,7 @@ https://github.com/user-attachments/assets/aef18253-e58f-4525-9032-f5a3d66c975a
 
 ### Installation
 
-Both Homebrew and manual installation will install Claude Squad as `cs` on your system.
+Both Homebrew and manual installation will install Agent Squad as `cs` on your system.
 
 #### Manual
 
@@ -58,11 +58,11 @@ Available Commands:
   debug       Print debug information like config paths
   help        Help about any command
   reset       Reset all stored instances
-  version     Print the version number of claude-squad
+  version     Print the version number of agent-squad
 
 Flags:
   -y, --autoyes          [experimental] If enabled, all instances will automatically accept prompts for claude code & aider
-  -h, --help             help for claude-squad
+  -h, --help             help for agent-squad
   -p, --program string   Program to run in new instances (e.g. 'aider --model ollama_chat/gemma3:1b')
 ```
 
@@ -75,7 +75,7 @@ NOTE: The default program is `claude` and we recommend using the latest version.
 
 <br />
 
-<b>Using Claude Squad with other AI assistants:</b>
+<b>Using Agent Squad with other AI assistants:</b>
 - For [Codex](https://github.com/openai/codex): Set your API key with `export OPENAI_API_KEY=<your_key>`
 - Launch with specific assistants:
    - Codex: `cs -p "codex"`

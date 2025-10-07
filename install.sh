@@ -110,6 +110,43 @@ download_release() {
     fi
 }
 
+place_binary() {
+    local source_binary=$1
+    local bin_dir=$2
+    local extension=$3
+
+    if [ ! -f "$source_binary" ]; then
+        echo "Installation failed, could not find source binary at $source_binary"
+        exit 1
+    fi
+
+    if [ ! -d "$bin_dir" ]; then
+        mkdir -p "$bin_dir"
+    fi
+
+    if [ "$UPGRADE_MODE" = true ] && [ -f "$bin_dir/$INSTALL_NAME${extension}" ]; then
+        echo "Removing previous installation from $bin_dir/$INSTALL_NAME${extension}"
+        rm -f "$bin_dir/$INSTALL_NAME${extension}"
+    fi
+
+    mv "$source_binary" "$bin_dir/$INSTALL_NAME${extension}"
+
+    if [ ! -f "$bin_dir/$INSTALL_NAME${extension}" ]; then
+        echo "Installation failed, could not find $bin_dir/$INSTALL_NAME${extension}"
+        exit 1
+    fi
+
+    chmod +x "$bin_dir/$INSTALL_NAME${extension}"
+
+    echo ""
+    if [ "$UPGRADE_MODE" = true ]; then
+        echo "Successfully upgraded '$INSTALL_NAME' to:"
+    else
+        echo "Installed as '$INSTALL_NAME':"
+    fi
+    echo "$("$bin_dir/$INSTALL_NAME${extension}" version)"
+}
+
 extract_and_install() {
     local tmp_dir=$1
     local archive_name=$2
@@ -132,34 +169,8 @@ extract_and_install() {
         ensure tar xzf "${tmp_dir}/${archive_name}" -C "$tmp_dir"
     fi
 
-    if [ ! -d "$bin_dir" ]; then
-        mkdir -p "$bin_dir"
-    fi
-
-    # Remove existing binary if upgrading
-    if [ "$UPGRADE_MODE" = true ] && [ -f "$bin_dir/$INSTALL_NAME${extension}" ]; then
-        echo "Removing previous installation from $bin_dir/$INSTALL_NAME${extension}"
-        rm -f "$bin_dir/$INSTALL_NAME${extension}"
-    fi
-
-    # Install binary with desired name
-    mv "${tmp_dir}/agent-squad${extension}" "$bin_dir/$INSTALL_NAME${extension}"
+    place_binary "${tmp_dir}/agent-squad${extension}" "$bin_dir" "$extension"
     rm -rf "$tmp_dir"
-
-    if [ ! -f "$bin_dir/$INSTALL_NAME${extension}" ]; then
-        echo "Installation failed, could not find $bin_dir/$INSTALL_NAME${extension}"
-        exit 1
-    fi
-
-    chmod +x "$bin_dir/$INSTALL_NAME${extension}"
-    
-    echo ""
-    if [ "$UPGRADE_MODE" = true ]; then
-        echo "Successfully upgraded '$INSTALL_NAME' to:"
-    else
-        echo "Installed as '$INSTALL_NAME':"
-    fi
-    echo "$("$bin_dir/$INSTALL_NAME${extension}" version)"
 }
 
 check_command_exists() {
@@ -317,4 +328,6 @@ err() {
     exit 1
 }
 
-main "$@" || exit 1
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@" || exit 1
+fi
