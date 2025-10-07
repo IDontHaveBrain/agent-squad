@@ -1,8 +1,8 @@
 package ui
 
 import (
-	"claude-squad/log"
-	"claude-squad/session"
+	"agent-squad/log"
+	"agent-squad/session"
 	"github.com/charmbracelet/lipgloss"
 )
 

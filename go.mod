@@ -1,4 +1,4 @@
-module claude-squad
+module agent-squad
 
 go 1.23.0
 

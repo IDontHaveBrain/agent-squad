@@ -2,8 +2,8 @@ package tmux
 
 import (
 	"bytes"
-	"claude-squad/cmd"
-	"claude-squad/log"
+	"agent-squad/cmd"
+	"agent-squad/log"
 	"context"
 	"crypto/sha256"
 	"errors"

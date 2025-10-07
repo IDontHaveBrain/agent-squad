@@ -1,12 +1,12 @@
 package app
 
 import (
-	"claude-squad/config"
-	"claude-squad/keys"
-	"claude-squad/log"
-	"claude-squad/session"
-	"claude-squad/ui"
-	"claude-squad/ui/overlay"
+	"agent-squad/config"
+	"agent-squad/keys"
+	"agent-squad/log"
+	"agent-squad/session"
+	"agent-squad/ui"
+	"agent-squad/ui/overlay"
 	"context"
 	"fmt"
 	"os"

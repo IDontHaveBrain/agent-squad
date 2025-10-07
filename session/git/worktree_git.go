@@ -1,7 +1,7 @@
 package git
 
 import (
-	"claude-squad/log"
+	"agent-squad/log"
 	"fmt"
 	"os/exec"
 	"strings"

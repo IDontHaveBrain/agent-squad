@@ -1,6 +1,10 @@
-# Claude Squad [![CI](https://github.com/smtg-ai/claude-squad/actions/workflows/build.yml/badge.svg)](https://github.com/smtg-ai/claude-squad/actions/workflows/build.yml) [![GitHub Release](https://img.shields.io/github/v/release/smtg-ai/claude-squad)](https://github.com/smtg-ai/claude-squad/releases/latest)
+# Agent Squad
 
-[Claude Squad](https://smtg-ai.github.io/claude-squad/) is a terminal app that manages multiple [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini](https://github.com/google-gemini/gemini-cli) (and other local agents including [Aider](https://github.com/Aider-AI/aider)) in separate workspaces, allowing you to work on multiple tasks simultaneously.
+Agent Squad is a terminal app that manages multiple [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini](https://github.com/google-gemini/gemini-cli) (and other local agents including [Aider](https://github.com/Aider-AI/aider)) in separate workspaces, allowing you to work on multiple tasks simultaneously.
+
+## Attribution
+
+This project is a fork and continuation of [Claude Squad](https://github.com/smtg-ai/claude-squad) by smtg-ai, which is no longer actively maintained. Agent Squad maintains the same AGPL-3.0 license and continues to build upon the excellent foundation provided by the original project.
 
 
 ![Claude Squad Screenshot](assets/screenshot.png)
@@ -21,19 +25,12 @@ https://github.com/user-attachments/assets/aef18253-e58f-4525-9032-f5a3d66c975a
 
 Both Homebrew and manual installation will install Claude Squad as `cs` on your system.
 
-#### Homebrew
-
-```bash
-brew install claude-squad
-ln -s "$(brew --prefix)/bin/claude-squad" "$(brew --prefix)/bin/cs"
-```
-
 #### Manual
 
-Claude Squad can also be installed by running the following command:
+Agent Squad can be installed by running the following command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smtg-ai/claude-squad/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/IDontHaveBrain/agent-squad/main/install.sh | bash
 ```
 
 This puts the `cs` binary in `~/.local/bin`.
@@ -41,7 +38,7 @@ This puts the `cs` binary in `~/.local/bin`.
 To use a custom name for the binary:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/smtg-ai/claude-squad/main/install.sh | bash -s -- --name <your-binary-name>
+curl -fsSL https://raw.githubusercontent.com/IDontHaveBrain/agent-squad/main/install.sh | bash -s -- --name <your-binary-name>
 ```
 
 ### Prerequisites
@@ -127,6 +124,4 @@ underlying program (ex. `claude`) to the latest version.
 
 [AGPL-3.0](LICENSE.md)
 
-### Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=smtg-ai/claude-squad&type=Date)](https://www.star-history.com/#smtg-ai/claude-squad&Date)
+Original project: [Claude Squad](https://github.com/smtg-ai/claude-squad) by smtg-ai

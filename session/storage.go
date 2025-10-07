@@ -1,7 +1,7 @@
 package session
 
 import (
-	"claude-squad/config"
+	"agent-squad/config"
 	"encoding/json"
 	"fmt"
 	"time"

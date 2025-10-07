@@ -1,9 +1,9 @@
 package daemon
 
 import (
-	"claude-squad/config"
-	"claude-squad/log"
-	"claude-squad/session"
+	"agent-squad/config"
+	"agent-squad/log"
+	"agent-squad/session"
 	"fmt"
 	"os"
 	"os/exec"
