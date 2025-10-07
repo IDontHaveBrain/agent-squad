@@ -2,6 +2,7 @@ package git
 
 import (
 	"strings"
+	"time"
 )
 
 // DiffStats holds statistics about the changes in a diff
@@ -21,15 +22,41 @@ func (d *DiffStats) IsEmpty() bool {
 	return d.Added == 0 && d.Removed == 0 && d.Content == ""
 }
 
-// Diff returns the git diff between the worktree and the base branch along with statistics
-func (g *GitWorktree) Diff() *DiffStats {
+// Diff returns the git diff between the worktree and the base branch along with statistics.
+// If force is true, cached results are bypassed even when the status signature matches.
+func (g *GitWorktree) Diff(force bool) *DiffStats {
 	stats := &DiffStats{}
 
-	// -N stages untracked files (intent to add), including them in the diff
-	_, err := g.runGitCommand(g.worktreePath, "add", "-N", ".")
+	g.diffMu.Lock()
+	defer g.diffMu.Unlock()
+
+	statusOutput, err := g.runGitCommand(g.worktreePath, "status", "--porcelain")
 	if err != nil {
 		stats.Error = err
 		return stats
+	}
+
+	now := time.Now()
+	g.lastDiffCheckedAt = now
+
+	statusSignature := statusOutput
+
+	if !force && g.lastDiff != nil && statusSignature == g.lastStatusSnapshot {
+		return cloneDiffStats(g.lastDiff)
+	}
+
+	if strings.Contains(statusOutput, "?? ") {
+		if _, err := g.runGitCommand(g.worktreePath, "add", "-N", "."); err != nil {
+			stats.Error = err
+			return stats
+		}
+
+		statusOutput, err = g.runGitCommand(g.worktreePath, "status", "--porcelain")
+		if err != nil {
+			stats.Error = err
+			return stats
+		}
+		statusSignature = statusOutput
 	}
 
 	content, err := g.runGitCommand(g.worktreePath, "--no-pager", "diff", g.GetBaseCommitSHA())
@@ -37,15 +64,48 @@ func (g *GitWorktree) Diff() *DiffStats {
 		stats.Error = err
 		return stats
 	}
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
-			stats.Added++
-		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
-			stats.Removed++
-		}
-	}
+
+	added, removed := countDiffStats(content)
+	stats.Added = added
+	stats.Removed = removed
 	stats.Content = content
 
+	g.lastStatusSnapshot = statusSignature
+	g.lastDiff = cloneDiffStats(stats)
+
 	return stats
+}
+
+func cloneDiffStats(src *DiffStats) *DiffStats {
+	if src == nil {
+		return nil
+	}
+	copy := *src
+	return &copy
+}
+
+func countDiffStats(content string) (int, int) {
+	var added, removed int
+	if content == "" {
+		return 0, 0
+	}
+
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		if len(line) == 0 {
+			continue
+		}
+		if line[0] == '+' {
+			if strings.HasPrefix(line, "+++") {
+				continue
+			}
+			added++
+		} else if line[0] == '-' {
+			if strings.HasPrefix(line, "---") {
+				continue
+			}
+			removed++
+		}
+	}
+	return added, removed
 }

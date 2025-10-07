@@ -75,6 +75,7 @@ func (g *GitWorktree) PushChanges(commitMessage string, open bool) error {
 		}
 	}
 
+	g.InvalidateDiffCache()
 	return nil
 }
 
@@ -98,6 +99,7 @@ func (g *GitWorktree) CommitChanges(commitMessage string) error {
 			log.ErrorLog.Print(err)
 			return fmt.Errorf("failed to commit changes: %w", err)
 		}
+		g.InvalidateDiffCache()
 	}
 
 	return nil

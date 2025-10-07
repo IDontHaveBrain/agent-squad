@@ -69,6 +69,11 @@ func (w *TabbedWindow) SetInstance(instance *session.Instance) {
 	w.instance = instance
 }
 
+// PreviewIsFallback reports whether the preview pane is showing its fallback state.
+func (w *TabbedWindow) PreviewIsFallback() bool {
+	return w.preview.IsFallback()
+}
+
 // AdjustPreviewWidth adjusts the width of the preview pane to be 90% of the provided width.
 func AdjustPreviewWidth(width int) int {
 	return int(float64(width) * 0.9)

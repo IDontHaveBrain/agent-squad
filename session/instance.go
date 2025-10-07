@@ -4,14 +4,18 @@ import (
 	"agent-squad/log"
 	"agent-squad/session/git"
 	"agent-squad/session/tmux"
-	"path/filepath"
-
+	"context"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/atotto/clipboard"
+	"github.com/fsnotify/fsnotify"
 )
 
 type Status int
@@ -25,6 +29,10 @@ const (
 	Loading
 	// Paused is if the instance is paused (worktree removed but branch preserved).
 	Paused
+)
+
+const (
+	diffRefreshInterval = 5 * time.Second
 )
 
 // Instance is a running instance of claude code.
@@ -54,6 +62,17 @@ type Instance struct {
 
 	// DiffStats stores the current git diff statistics
 	diffStats *git.DiffStats
+
+	diffDirty     atomic.Bool
+	diffMu        sync.Mutex
+	previewDirty  atomic.Bool
+	lastDiffCheck atomic.Int64
+
+	diffWatcher         *fsnotify.Watcher
+	diffWatcherDisabled bool
+	diffWatchCtx        context.Context
+	diffWatchCancel     context.CancelFunc
+	diffWatchWg         sync.WaitGroup
 
 	// The below fields are initialized upon calling Start().
 
@@ -127,6 +146,9 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 			Content: data.DiffStats.Content,
 		},
 	}
+	instance.previewDirty.Store(true)
+	instance.diffDirty.Store(true)
+	instance.lastDiffCheck.Store(0)
 
 	if instance.Paused() {
 		instance.started = true
@@ -161,7 +183,7 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		return nil, fmt.Errorf("failed to get absolute path: %w", err)
 	}
 
-	return &Instance{
+	inst := &Instance{
 		Title:     opts.Title,
 		Status:    Ready,
 		Path:      absPath,
@@ -171,7 +193,11 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		CreatedAt: t,
 		UpdatedAt: t,
 		AutoYes:   false,
-	}, nil
+	}
+	inst.previewDirty.Store(true)
+	inst.diffDirty.Store(true)
+	inst.lastDiffCheck.Store(0)
+	return inst, nil
 }
 
 func (i *Instance) RepoName() (string, error) {
@@ -246,6 +272,14 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		}
 	}
 
+	if err := i.startDiffWatcher(); err != nil {
+		setupErr = fmt.Errorf("failed to initialize diff watcher: %w", err)
+		return setupErr
+	}
+
+	i.MarkPreviewDirty()
+	i.MarkDiffDirty()
+	i.lastDiffCheck.Store(0)
 	i.SetStatus(Running)
 
 	return nil
@@ -259,6 +293,10 @@ func (i *Instance) Kill() error {
 	}
 
 	var errs []error
+
+	if err := i.stopDiffWatcher(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to stop diff watcher: %w", err))
+	}
 
 	// Always try to cleanup both resources, even if one fails
 	// Clean up tmux session first since it's using the git worktree
@@ -298,14 +336,39 @@ func (i *Instance) Preview() (string, error) {
 	if !i.started || i.Status == Paused {
 		return "", nil
 	}
-	return i.tmuxSession.CapturePaneContent()
+	content, err := i.tmuxSession.CapturePaneContent()
+	if err != nil {
+		return "", err
+	}
+	i.previewDirty.Store(false)
+	return content, nil
 }
 
 func (i *Instance) HasUpdated() (updated bool, hasPrompt bool) {
 	if !i.started {
 		return false, false
 	}
-	return i.tmuxSession.HasUpdated()
+	updated, hasPrompt = i.tmuxSession.HasUpdated()
+	if updated || hasPrompt {
+		i.MarkPreviewDirty()
+		i.MarkDiffDirty()
+	}
+	return updated, hasPrompt
+}
+
+func (i *Instance) MarkPreviewDirty() {
+	i.previewDirty.Store(true)
+}
+
+func (i *Instance) IsPreviewDirty() bool {
+	return i.previewDirty.Load()
+}
+
+func (i *Instance) MarkDiffDirty() {
+	i.diffDirty.Store(true)
+	if i.gitWorktree != nil {
+		i.gitWorktree.InvalidateDiffCache()
+	}
 }
 
 // TapEnter sends an enter key press to the tmux session if AutoYes is enabled.
@@ -374,6 +437,10 @@ func (i *Instance) Pause() error {
 	}
 
 	var errs []error
+
+	if err := i.stopDiffWatcher(); err != nil {
+		errs = append(errs, fmt.Errorf("failed to stop diff watcher: %w", err))
+	}
 
 	// Check if there are any changes to commit
 	if dirty, err := i.gitWorktree.IsDirty(); err != nil {
@@ -476,12 +543,19 @@ func (i *Instance) Resume() error {
 		}
 	}
 
+	if err := i.startDiffWatcher(); err != nil {
+		return fmt.Errorf("failed to initialize diff watcher: %w", err)
+	}
+
+	i.MarkPreviewDirty()
+	i.MarkDiffDirty()
+	i.lastDiffCheck.Store(0)
 	i.SetStatus(Running)
 	return nil
 }
 
 // UpdateDiffStats updates the git diff statistics for this instance
-func (i *Instance) UpdateDiffStats() error {
+func (i *Instance) UpdateDiffStats(now time.Time) error {
 	if !i.started {
 		i.diffStats = nil
 		return nil
@@ -492,17 +566,48 @@ func (i *Instance) UpdateDiffStats() error {
 		return nil
 	}
 
-	stats := i.gitWorktree.Diff()
+	dirty := i.diffDirty.Swap(false)
+
+	refresh := false
+	force := false
+
+	if dirty {
+		refresh = true
+		force = i.diffWatcherDisabled
+	} else {
+		if now.IsZero() {
+			refresh = true
+			force = true
+		} else {
+			last := time.Unix(0, i.lastDiffCheck.Load())
+			if last.IsZero() || now.Sub(last) >= diffRefreshInterval {
+				refresh = true
+				force = true
+			}
+		}
+	}
+
+	if !refresh {
+		return nil
+	}
+
+	i.diffMu.Lock()
+	defer i.diffMu.Unlock()
+
+	stats := i.gitWorktree.Diff(force)
 	if stats.Error != nil {
 		if strings.Contains(stats.Error.Error(), "base commit SHA not set") {
 			// Worktree is not fully set up yet, not an error
 			i.diffStats = nil
+			i.MarkDiffDirty()
 			return nil
 		}
+		i.MarkDiffDirty()
 		return fmt.Errorf("failed to get diff stats: %w", stats.Error)
 	}
 
 	i.diffStats = stats
+	i.lastDiffCheck.Store(now.UnixNano())
 	return nil
 }
 
@@ -530,6 +635,160 @@ func (i *Instance) SendPrompt(prompt string) error {
 	}
 
 	return nil
+}
+
+func (i *Instance) startDiffWatcher() error {
+	if i.gitWorktree == nil {
+		return fmt.Errorf("git worktree not initialized")
+	}
+
+	worktreePath := i.gitWorktree.GetWorktreePath()
+	if worktreePath == "" {
+		return fmt.Errorf("worktree path not set")
+	}
+
+	// Clean up any existing watcher before starting a new one
+	if i.diffWatcher != nil {
+		if err := i.stopDiffWatcher(); err != nil {
+			log.WarningLog.Printf("failed to stop existing diff watcher for %s: %v", i.Title, err)
+		}
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		i.diffWatcherDisabled = true
+		log.WarningLog.Printf("disabling diff watcher for %s: %v", i.Title, err)
+		i.MarkDiffDirty()
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	i.diffWatcher = watcher
+	i.diffWatcherDisabled = false
+	i.diffWatchCtx = ctx
+	i.diffWatchCancel = cancel
+
+	if err := i.addWatcherRecursive(worktreePath); err != nil {
+		cancel()
+		if closeErr := watcher.Close(); closeErr != nil {
+			log.WarningLog.Printf("failed to close diff watcher for %s: %v", i.Title, closeErr)
+		}
+		i.diffWatcher = nil
+		i.diffWatchCtx = nil
+		i.diffWatchCancel = nil
+		i.diffWatcherDisabled = true
+		log.WarningLog.Printf("disabling diff watcher for %s: %v", i.Title, err)
+		i.MarkDiffDirty()
+		return nil
+	}
+
+	i.diffWatchWg.Add(1)
+	go i.runDiffWatcher()
+
+	// Trigger an initial diff computation after we start watching
+	i.MarkDiffDirty()
+	return nil
+}
+
+func (i *Instance) stopDiffWatcher() error {
+	if i.diffWatchCancel != nil {
+		i.diffWatchCancel()
+	}
+
+	var errs []error
+
+	if i.diffWatcher != nil {
+		i.diffWatchWg.Wait()
+		if err := i.diffWatcher.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	i.diffWatcher = nil
+	i.diffWatchCtx = nil
+	i.diffWatchCancel = nil
+
+	return i.combineErrors(errs)
+}
+
+func (i *Instance) runDiffWatcher() {
+	defer i.diffWatchWg.Done()
+	for {
+		select {
+		case <-i.diffWatchCtx.Done():
+			return
+		case event, ok := <-i.diffWatcher.Events:
+			if !ok {
+				return
+			}
+
+			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename|fsnotify.Chmod) != 0 {
+				i.MarkDiffDirty()
+			}
+
+			if event.Op&fsnotify.Create != 0 {
+				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+					if err := i.addWatcherRecursive(event.Name); err != nil {
+						log.WarningLog.Printf("failed to watch new directory %s for %s: %v",
+							event.Name, i.Title, err)
+					}
+				}
+			}
+		case err, ok := <-i.diffWatcher.Errors:
+			if !ok {
+				return
+			}
+			log.WarningLog.Printf("diff watcher error for %s: %v", i.Title, err)
+		}
+	}
+}
+
+func (i *Instance) addWatcherRecursive(root string) error {
+	if i.diffWatcher == nil {
+		return nil
+	}
+
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if !entry.IsDir() {
+			return nil
+		}
+
+		if i.shouldIgnoreWatch(path) {
+			return filepath.SkipDir
+		}
+
+		if err := i.diffWatcher.Add(path); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (i *Instance) shouldIgnoreWatch(path string) bool {
+	if i.gitWorktree == nil {
+		return false
+	}
+
+	root := i.gitWorktree.GetWorktreePath()
+	if root == "" {
+		return false
+	}
+
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+
+	sep := string(os.PathSeparator)
+	if rel == ".git" || strings.HasPrefix(rel, ".git"+sep) {
+		return true
+	}
+
+	return false
 }
 
 // PreviewFullHistory captures the entire tmux pane output including full scrollback history

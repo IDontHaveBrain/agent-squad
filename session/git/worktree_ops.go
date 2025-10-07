@@ -52,9 +52,17 @@ func (g *GitWorktree) Setup() error {
 	}
 
 	if branchExists {
-		return g.setupFromExistingBranch()
+		if err := g.setupFromExistingBranch(); err != nil {
+			return err
+		}
+		g.InvalidateDiffCache()
+		return nil
 	}
-	return g.setupNewWorktree()
+	if err := g.setupNewWorktree(); err != nil {
+		return err
+	}
+	g.InvalidateDiffCache()
+	return nil
 }
 
 // setupFromExistingBranch creates a worktree from an existing branch
@@ -159,6 +167,7 @@ func (g *GitWorktree) Cleanup() error {
 		return g.combineErrors(errs)
 	}
 
+	g.InvalidateDiffCache()
 	return nil
 }
 
@@ -169,6 +178,7 @@ func (g *GitWorktree) Remove() error {
 		return fmt.Errorf("failed to remove worktree: %w", err)
 	}
 
+	g.InvalidateDiffCache()
 	return nil
 }
 
@@ -177,6 +187,7 @@ func (g *GitWorktree) Prune() error {
 	if _, err := g.runGitCommand(g.repoPath, "worktree", "prune"); err != nil {
 		return fmt.Errorf("failed to prune worktrees: %w", err)
 	}
+	g.InvalidateDiffCache()
 	return nil
 }
 

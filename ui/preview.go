@@ -49,6 +49,11 @@ func (p *PreviewPane) setFallbackState(message string) {
 	}
 }
 
+// IsFallback reports whether the preview is currently showing fallback content.
+func (p *PreviewPane) IsFallback() bool {
+	return p.previewState.fallback
+}
+
 // Updates the preview pane content with the tmux pane content
 func (p *PreviewPane) UpdateContent(instance *session.Instance) error {
 	switch {

@@ -19,6 +19,11 @@ import (
 
 const GlobalInstanceLimit = 10
 
+const (
+	previewTickInterval  = 250 * time.Millisecond
+	metadataTickInterval = time.Second
+)
+
 // Run is the main entrypoint into the application.
 func Run(ctx context.Context, program string, autoYes bool) error {
 	p := tea.NewProgram(
@@ -91,6 +96,9 @@ type home struct {
 	textOverlay *overlay.TextOverlay
 	// confirmationOverlay displays confirmation modals
 	confirmationOverlay *overlay.ConfirmationOverlay
+
+	// lastPreviewInstance tracks the previously previewed instance to detect selection changes
+	lastPreviewInstance *session.Instance
 }
 
 func newHome(ctx context.Context, program string, autoYes bool) *home {
@@ -176,7 +184,7 @@ func (m *home) Init() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
 		func() tea.Msg {
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(previewTickInterval)
 			return previewTickMsg{}
 		},
 		tickUpdateMetadataCmd,
@@ -192,7 +200,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(
 			cmd,
 			func() tea.Msg {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(previewTickInterval)
 				return previewTickMsg{}
 			},
 		)
@@ -200,6 +208,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.menu.ClearKeydown()
 		return m, nil
 	case tickUpdateMetadataMessage:
+		now := time.Now()
 		for _, instance := range m.list.GetInstances() {
 			if !instance.Started() || instance.Paused() {
 				continue
@@ -214,7 +223,7 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					instance.SetStatus(session.Ready)
 				}
 			}
-			if err := instance.UpdateDiffStats(); err != nil {
+			if err := instance.UpdateDiffStats(now); err != nil {
 				log.WarningLog.Printf("could not update diff stats: %v", err)
 			}
 		}
@@ -258,6 +267,9 @@ func (m *home) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *home) handleQuit() (tea.Model, tea.Cmd) {
 	if err := m.storage.SaveInstances(m.list.GetInstances()); err != nil {
+		return m, m.handleError(err)
+	}
+	if err := m.storage.Flush(); err != nil {
 		return m, m.handleError(err)
 	}
 	return m, tea.Quit
@@ -576,6 +588,7 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			if err = worktree.PushChanges(commitMsg, true); err != nil {
 				return err
 			}
+			selected.MarkDiffDirty()
 			return nil
 		}
 
@@ -634,15 +647,28 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 func (m *home) instanceChanged() tea.Cmd {
 	// selected may be nil
 	selected := m.list.GetSelectedInstance()
+	previous := m.lastPreviewInstance
+	if selected != previous && selected != nil {
+		selected.MarkPreviewDirty()
+	}
+	m.lastPreviewInstance = selected
 
 	m.tabbedWindow.UpdateDiff(selected)
 	m.tabbedWindow.SetInstance(selected)
 	// Update menu with current instance
 	m.menu.SetInstance(selected)
 
-	// If there's no selected instance, we don't need to update the preview.
-	if err := m.tabbedWindow.UpdatePreview(selected); err != nil {
-		return m.handleError(err)
+	needsPreview := false
+	if selected == nil {
+		needsPreview = previous != nil || !m.tabbedWindow.PreviewIsFallback()
+	} else if selected.IsPreviewDirty() || m.tabbedWindow.IsPreviewInScrollMode() {
+		needsPreview = true
+	}
+
+	if needsPreview {
+		if err := m.tabbedWindow.UpdatePreview(selected); err != nil {
+			return m.handleError(err)
+		}
 	}
 	return nil
 }
@@ -672,10 +698,9 @@ type tickUpdateMetadataMessage struct{}
 
 type instanceChangedMsg struct{}
 
-// tickUpdateMetadataCmd is the callback to update the metadata of the instances every 500ms. Note that we iterate
-// overall the instances and capture their output. It's a pretty expensive operation. Let's do it 2x a second only.
+// tickUpdateMetadataCmd schedules periodic metadata refreshes.
 var tickUpdateMetadataCmd = func() tea.Msg {
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(metadataTickInterval)
 	return tickUpdateMetadataMessage{}
 }
 

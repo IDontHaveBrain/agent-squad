@@ -34,6 +34,24 @@ func RunDaemon(cfg *config.Config) error {
 	}
 
 	pollInterval := time.Duration(cfg.DaemonPollInterval) * time.Millisecond
+	maxInterval := pollInterval * 5
+	if maxInterval < 5*time.Second {
+		maxInterval = 5 * time.Second
+	}
+
+	type pollState struct {
+		interval time.Duration
+		next     time.Time
+	}
+
+	states := make(map[string]*pollState, len(instances))
+	now := time.Now()
+	for _, instance := range instances {
+		states[instance.Title] = &pollState{
+			interval: pollInterval,
+			next:     now,
+		}
+	}
 
 	// If we get an error for a session, it's likely that we'll keep getting the error. Log every 30 seconds.
 	everyN := log.NewEvery(60 * time.Second)
@@ -45,18 +63,45 @@ func RunDaemon(cfg *config.Config) error {
 		defer wg.Done()
 		ticker := time.NewTimer(pollInterval)
 		for {
+			now := time.Now()
 			for _, instance := range instances {
-				// We only store started instances, but check anyway.
-				if instance.Started() && !instance.Paused() {
-					if _, hasPrompt := instance.HasUpdated(); hasPrompt {
-						instance.TapEnter()
-						if err := instance.UpdateDiffStats(); err != nil {
-							if everyN.ShouldLog() {
-								log.WarningLog.Printf("could not update diff stats for %s: %v", instance.Title, err)
-							}
-						}
+				state := states[instance.Title]
+				if state == nil {
+					state = &pollState{interval: pollInterval, next: now}
+					states[instance.Title] = state
+				}
+
+				if !instance.Started() || instance.Paused() {
+					state.interval = pollInterval
+					state.next = now.Add(state.interval)
+					continue
+				}
+
+				if now.Before(state.next) {
+					continue
+				}
+
+				updated, hasPrompt := instance.HasUpdated()
+				if hasPrompt {
+					instance.TapEnter()
+				}
+
+				if err := instance.UpdateDiffStats(now); err != nil {
+					if everyN.ShouldLog() {
+						log.WarningLog.Printf("could not update diff stats for %s: %v", instance.Title, err)
 					}
 				}
+
+				if updated || hasPrompt {
+					state.interval = pollInterval
+				} else if state.interval < maxInterval {
+					nextInterval := state.interval * 2
+					if nextInterval > maxInterval {
+						nextInterval = maxInterval
+					}
+					state.interval = nextInterval
+				}
+				state.next = now.Add(state.interval)
 			}
 
 			// Handle stop before ticker.
@@ -83,6 +128,9 @@ func RunDaemon(cfg *config.Config) error {
 
 	if err := storage.SaveInstances(instances); err != nil {
 		log.ErrorLog.Printf("failed to save instances when terminating daemon: %v", err)
+	}
+	if err := storage.Flush(); err != nil {
+		log.ErrorLog.Printf("failed to flush instances when terminating daemon: %v", err)
 	}
 	return nil
 }

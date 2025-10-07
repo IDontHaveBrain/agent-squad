@@ -2,8 +2,11 @@ package session
 
 import (
 	"agent-squad/config"
+	"agent-squad/log"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -42,13 +45,20 @@ type DiffStatsData struct {
 
 // Storage handles saving and loading instances using the state interface
 type Storage struct {
-	state config.InstanceStorage
+	state            config.InstanceStorage
+	mu               sync.Mutex
+	lastSavedData    []byte
+	lastSaveTime     time.Time
+	debounceInterval time.Duration
+	pendingData      []byte
+	debounceTimer    *time.Timer
 }
 
 // NewStorage creates a new storage instance
 func NewStorage(state config.InstanceStorage) (*Storage, error) {
 	return &Storage{
-		state: state,
+		state:            state,
+		debounceInterval: 5 * time.Second,
 	}, nil
 }
 
@@ -68,7 +78,32 @@ func (s *Storage) SaveInstances(instances []*Instance) error {
 		return fmt.Errorf("failed to marshal instances: %w", err)
 	}
 
-	return s.state.SaveInstances(jsonData)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if bytes.Equal(jsonData, s.lastSavedData) && s.pendingData == nil {
+		return nil
+	}
+
+	now := time.Now()
+	if s.lastSaveTime.IsZero() || now.Sub(s.lastSaveTime) >= s.debounceInterval {
+		if err := s.writeLocked(jsonData); err != nil {
+			return err
+		}
+		s.trackImmediateSave(jsonData, now)
+		return nil
+	}
+
+	s.pendingData = cloneBytes(jsonData)
+	if s.debounceTimer == nil {
+		delay := s.debounceInterval - now.Sub(s.lastSaveTime)
+		if delay < time.Second {
+			delay = time.Second
+		}
+		s.debounceTimer = time.AfterFunc(delay, s.flushPending)
+	}
+
+	return nil
 }
 
 // LoadInstances loads the list of instances from disk
@@ -145,4 +180,75 @@ func (s *Storage) UpdateInstance(instance *Instance) error {
 // DeleteAllInstances removes all stored instances
 func (s *Storage) DeleteAllInstances() error {
 	return s.state.DeleteAllInstances()
+}
+
+// Flush synchronously writes any pending instance data to disk.
+func (s *Storage) Flush() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.pendingData) == 0 {
+		return nil
+	}
+
+	data := cloneBytes(s.pendingData)
+	if err := s.writeLocked(data); err != nil {
+		return err
+	}
+	s.lastSavedData = data
+	s.lastSaveTime = time.Now()
+	s.pendingData = nil
+	if s.debounceTimer != nil {
+		s.debounceTimer.Stop()
+		s.debounceTimer = nil
+	}
+	return nil
+}
+
+func (s *Storage) trackImmediateSave(data []byte, now time.Time) {
+	s.lastSavedData = cloneBytes(data)
+	s.lastSaveTime = now
+	s.pendingData = nil
+	if s.debounceTimer != nil {
+		s.debounceTimer.Stop()
+		s.debounceTimer = nil
+	}
+}
+
+func (s *Storage) flushPending() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.pendingData) == 0 {
+		s.debounceTimer = nil
+		return
+	}
+
+	data := cloneBytes(s.pendingData)
+	if err := s.writeLocked(data); err != nil {
+		if log.WarningLog != nil {
+			log.WarningLog.Printf("failed to flush pending instances: %v", err)
+		}
+		s.debounceTimer = time.AfterFunc(s.debounceInterval, s.flushPending)
+		return
+	}
+
+	s.lastSavedData = data
+	s.lastSaveTime = time.Now()
+	s.pendingData = nil
+	s.debounceTimer = nil
+}
+
+func (s *Storage) writeLocked(data []byte) error {
+	clone := cloneBytes(data)
+	return s.state.SaveInstances(json.RawMessage(clone))
+}
+
+func cloneBytes(src []byte) []byte {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make([]byte, len(src))
+	copy(dst, src)
+	return dst
 }

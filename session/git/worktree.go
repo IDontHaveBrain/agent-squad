@@ -5,6 +5,7 @@ import (
 	"agent-squad/log"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -29,6 +30,12 @@ type GitWorktree struct {
 	branchName string
 	// Base commit hash for the worktree
 	baseCommitSHA string
+
+	// Cached diff bookkeeping to avoid redundant git subprocesses
+	diffMu             sync.Mutex
+	lastStatusSnapshot string
+	lastDiff           *DiffStats
+	lastDiffCheckedAt  time.Time
 }
 
 func NewGitWorktreeFromStorage(repoPath string, worktreePath string, sessionName string, branchName string, baseCommitSHA string) *GitWorktree {
@@ -99,4 +106,13 @@ func (g *GitWorktree) GetRepoName() string {
 // GetBaseCommitSHA returns the base commit SHA for the worktree
 func (g *GitWorktree) GetBaseCommitSHA() string {
 	return g.baseCommitSHA
+}
+
+// InvalidateDiffCache clears cached diff information.
+func (g *GitWorktree) InvalidateDiffCache() {
+	g.diffMu.Lock()
+	g.lastStatusSnapshot = ""
+	g.lastDiff = nil
+	g.lastDiffCheckedAt = time.Time{}
+	g.diffMu.Unlock()
 }
