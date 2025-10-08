@@ -153,6 +153,8 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 	if instance.Paused() {
 		instance.started = true
 		instance.tmuxSession = tmux.NewTmuxSession(instance.Title, instance.Program)
+		// Sync branch from gitWorktree for paused instances
+		instance.GetBranch()
 	} else {
 		if err := instance.Start(false); err != nil {
 			return nil, err
@@ -254,6 +256,8 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 			setupErr = fmt.Errorf("failed to restore existing session: %w", err)
 			return setupErr
 		}
+		// Sync branch from gitWorktree when loading from storage
+		i.GetBranch()
 	} else {
 		// Setup git worktree first
 		if err := i.gitWorktree.Setup(); err != nil {
@@ -404,6 +408,14 @@ func (i *Instance) GetGitWorktree() (*git.GitWorktree, error) {
 	return i.gitWorktree, nil
 }
 
+// GetBranch returns the current branch name, syncing from gitWorktree if available
+func (i *Instance) GetBranch() string {
+	if i.gitWorktree != nil {
+		i.Branch = i.gitWorktree.GetBranchName()
+	}
+	return i.Branch
+}
+
 func (i *Instance) Started() bool {
 	return i.started
 }
@@ -551,6 +563,10 @@ func (i *Instance) Resume() error {
 	i.MarkDiffDirty()
 	i.lastDiffCheck.Store(0)
 	i.SetStatus(Running)
+
+	// Sync branch from gitWorktree after resume
+	i.GetBranch()
+
 	return nil
 }
 

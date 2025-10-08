@@ -100,3 +100,42 @@ func runGitInstanceTest(t *testing.T, dir string, args ...string) string {
 	}
 	return string(out)
 }
+
+func TestInstanceGetBranch(t *testing.T) {
+	repo := setupInstanceTestRepo(t)
+	head := strings.TrimSpace(runGitInstanceTest(t, repo, "rev-parse", "HEAD"))
+
+	worktree := git.NewGitWorktreeFromStorage(repo, repo, "test-session", "test-branch", head)
+
+	inst := &Instance{
+		Title:       "test-instance",
+		Branch:      "old-branch",
+		started:     true,
+		Status:      Running,
+		gitWorktree: worktree,
+	}
+
+	branch := inst.GetBranch()
+	if branch != "test-branch" {
+		t.Fatalf("expected branch 'test-branch', got '%s'", branch)
+	}
+
+	if inst.Branch != "test-branch" {
+		t.Fatalf("expected instance.Branch to be synced to 'test-branch', got '%s'", inst.Branch)
+	}
+}
+
+func TestInstanceGetBranchWithoutWorktree(t *testing.T) {
+	inst := &Instance{
+		Title:       "test-instance",
+		Branch:      "fallback-branch",
+		started:     false,
+		Status:      Ready,
+		gitWorktree: nil,
+	}
+
+	branch := inst.GetBranch()
+	if branch != "fallback-branch" {
+		t.Fatalf("expected fallback branch 'fallback-branch', got '%s'", branch)
+	}
+}
