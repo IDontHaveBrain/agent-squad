@@ -385,9 +385,67 @@ func (i *Instance) TapEnter() {
 	}
 }
 
+func (i *Instance) ensureTmuxSession() error {
+	if !i.started {
+		return fmt.Errorf("cannot ensure tmux session for instance that has not been started")
+	}
+	if i.Status == Paused {
+		return fmt.Errorf("cannot ensure tmux session for paused instance")
+	}
+	if i.tmuxSession == nil {
+		return fmt.Errorf("tmux session not initialized")
+	}
+	if i.tmuxSession.DoesSessionExist() {
+		return nil
+	}
+
+	worktreePath := ""
+	if i.gitWorktree != nil {
+		worktreePath = i.gitWorktree.GetWorktreePath()
+	}
+	if worktreePath == "" {
+		return fmt.Errorf("worktree path not set; resume the instance before attaching")
+	}
+
+	if _, err := os.Stat(worktreePath); err != nil {
+		return fmt.Errorf("worktree path %s unavailable: %w", worktreePath, err)
+	}
+
+	if log.InfoLog != nil {
+		log.InfoLog.Printf("tmux session missing for %s; starting a fresh session in %s", i.Title, worktreePath)
+	}
+	if err := i.tmuxSession.Start(worktreePath); err != nil {
+		return fmt.Errorf("failed to start new tmux session: %w", err)
+	}
+
+	i.MarkPreviewDirty()
+	i.MarkDiffDirty()
+	i.lastDiffCheck.Store(0)
+	i.SetStatus(Running)
+	i.UpdatedAt = time.Now()
+
+	return nil
+}
+
 func (i *Instance) Attach() (chan struct{}, error) {
 	if !i.started {
 		return nil, fmt.Errorf("cannot attach instance that has not been started")
+	}
+	if err := i.ensureTmuxSession(); err != nil {
+		return nil, err
+	}
+
+	ch, err := i.tmuxSession.Attach()
+	if err == nil {
+		return ch, nil
+	}
+
+	// Attempt one restore in case the PTY was stale
+	if log.WarningLog != nil {
+		log.WarningLog.Printf("failed to attach to tmux session %s: %v; attempting restore", i.Title, err)
+	}
+	if restoreErr := i.tmuxSession.Restore(); restoreErr != nil {
+		return nil, fmt.Errorf("failed to attach and restore tmux session: %w", err)
 	}
 	return i.tmuxSession.Attach()
 }

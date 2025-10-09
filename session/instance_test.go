@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"agent-squad/session/git"
+	"agent-squad/session/tmux"
 )
 
 func TestInstancePreviewDirtyFlag(t *testing.T) {
@@ -139,3 +141,136 @@ func TestInstanceGetBranchWithoutWorktree(t *testing.T) {
 		t.Fatalf("expected fallback branch 'fallback-branch', got '%s'", branch)
 	}
 }
+
+func TestEnsureTmuxSessionCreatesNewSessionWhenMissing(t *testing.T) {
+	repo := setupInstanceTestRepo(t)
+	worktreeDir := t.TempDir()
+
+	worktree := git.NewGitWorktreeFromStorage(repo, worktreeDir, "test-session", "test-branch", "")
+
+	exec := &fakeExecutor{captureReturnValue: "Do you trust the files in this folder?"}
+	pty := &fakePtyFactory{exec: exec}
+
+	inst := &Instance{
+		Title:       "test-session",
+		Program:     "claude",
+		started:     true,
+		Status:      Ready,
+		gitWorktree: worktree,
+		tmuxSession: tmux.NewTmuxSessionWithDeps("test-session", "claude", pty, exec),
+	}
+
+	if err := inst.ensureTmuxSession(); err != nil {
+		t.Fatalf("ensureTmuxSession returned error: %v", err)
+	}
+
+	if !exec.hasSession {
+		t.Fatalf("expected ensureTmuxSession to start a tmux session")
+	}
+
+	if len(pty.startCalls) == 0 || !strings.Contains(pty.startCalls[0], "new-session") {
+		t.Fatalf("expected tmux new-session command to run, got %v", pty.startCalls)
+	}
+
+	if inst.Status != Running {
+		t.Fatalf("expected instance status Running, got %v", inst.Status)
+	}
+}
+
+func TestEnsureTmuxSessionFailsWhenStartErrors(t *testing.T) {
+	repo := setupInstanceTestRepo(t)
+	worktreeDir := t.TempDir()
+
+	worktree := git.NewGitWorktreeFromStorage(repo, worktreeDir, "another-session", "test-branch", "")
+
+	exec := &fakeExecutor{failNewSession: true, captureReturnValue: "Do you trust the files in this folder?"}
+	pty := &fakePtyFactory{exec: exec}
+
+	inst := &Instance{
+		Title:       "another-session",
+		Program:     "claude",
+		started:     true,
+		Status:      Ready,
+		gitWorktree: worktree,
+		tmuxSession: tmux.NewTmuxSessionWithDeps("another-session", "claude", pty, exec),
+	}
+
+	err := inst.ensureTmuxSession()
+	if err == nil {
+		t.Fatalf("expected ensureTmuxSession to fail when tmux start fails")
+	}
+	if !strings.Contains(err.Error(), "failed to start") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+type fakeExecutor struct {
+	hasSession         bool
+	failNewSession     bool
+	commands           []string
+	captureResponded   bool
+	captureReturnValue string
+}
+
+func (f *fakeExecutor) Run(cmd *exec.Cmd) error {
+	f.commands = append(f.commands, strings.Join(cmd.Args, " "))
+
+	if len(cmd.Args) < 2 {
+		return nil
+	}
+
+	switch cmd.Args[1] {
+	case "has-session":
+		if f.hasSession {
+			return nil
+		}
+		return fmt.Errorf("no session")
+	case "kill-session":
+		f.hasSession = false
+		return nil
+	case "set-option":
+		return nil
+	default:
+		return nil
+	}
+}
+
+func (f *fakeExecutor) Output(cmd *exec.Cmd) ([]byte, error) {
+	f.commands = append(f.commands, strings.Join(cmd.Args, " "))
+	if len(cmd.Args) >= 2 && cmd.Args[1] == "capture-pane" {
+		if !f.captureResponded && f.captureReturnValue != "" {
+			f.captureResponded = true
+			return []byte(f.captureReturnValue), nil
+		}
+		return []byte(""), nil
+	}
+	return []byte(""), nil
+}
+
+type fakePtyFactory struct {
+	exec       *fakeExecutor
+	startCalls []string
+}
+
+func (f *fakePtyFactory) Start(cmd *exec.Cmd) (*os.File, error) {
+	f.startCalls = append(f.startCalls, strings.Join(cmd.Args, " "))
+
+	if len(cmd.Args) >= 2 && cmd.Args[1] == "new-session" {
+		if f.exec.failNewSession {
+			return nil, fmt.Errorf("forced new-session failure")
+		}
+		f.exec.hasSession = true
+	}
+
+	if len(cmd.Args) >= 2 && cmd.Args[1] == "attach-session" && !f.exec.hasSession {
+		return nil, fmt.Errorf("session missing")
+	}
+
+	file, err := os.CreateTemp("", "fake-pty")
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
+}
+
+func (f *fakePtyFactory) Close() {}
