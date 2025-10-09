@@ -5,6 +5,7 @@ import (
 	"agent-squad/log"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -50,9 +51,21 @@ func NewGitWorktreeFromStorage(repoPath string, worktreePath string, sessionName
 
 // NewGitWorktree creates a new GitWorktree instance
 func NewGitWorktree(repoPath string, sessionName string) (tree *GitWorktree, branchname string, err error) {
-	cfg := config.LoadConfig()
 	sanitizedName := sanitizeBranchName(sessionName)
-	branchName := fmt.Sprintf("%s%s", cfg.BranchPrefix, sanitizedName)
+
+	cfg := config.LoadConfig()
+
+	// Start with prefixed naming as the baseline to preserve backwards compatibility.
+	baseBranchName := fmt.Sprintf("%s%s", cfg.BranchPrefix, sanitizedName)
+	if strings.Contains(sessionName, "/") && sanitizedName != "" {
+		// When the sanitized name survives, allow bypassing the prefix for nested paths.
+		baseBranchName = sanitizedName
+	}
+
+	branchName := sanitizeBranchName(baseBranchName)
+	if branchName == "" {
+		return nil, "", fmt.Errorf("session name %q cannot be transformed into a valid branch name", sessionName)
+	}
 
 	// Convert repoPath to absolute path
 	absPath, err := filepath.Abs(repoPath)
